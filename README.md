@@ -39,7 +39,7 @@ For **Cloudflare Turnstile**, **Cloudflare 5s challenge**, **AWS WAF**, and **Da
 <br>
 <a href="https://peak.fo"><img src="https://img.shields.io/badge/Try-Peak%20Solutions-FF6B35?style=for-the-badge" alt="Peak Solutions"></a>
 <br>
-<sub>API-first solving · <strong>$0.50 – $1.20 / 1K</strong> · volume tiers · sub-second response · <a href="https://peak.fo">peak.fo</a></sub>
+<sub>API-first solving · <strong>$0.35 – $1.00 / 1K</strong> · volume tiers · sub-second response · <a href="https://peak.fo">peak.fo</a></sub>
 
 </div>
 
@@ -356,6 +356,7 @@ hcaptcha-hsj-hsw-reversed/
 | [`docs/13-hsw-rust-crates.md`](docs/13-hsw-rust-crates.md) | Rust-crate inventory + complete XOR-keys & obfuscation-constants reference |
 | [`docs/16-function-inventory.md`](docs/16-function-inventory.md) | Comprehensive per-function inventory (crypto primitives + roles) |
 | [`docs/19-ntoken-cipher-solved.md`](docs/19-ntoken-cipher-solved.md) | **The n-token cipher, solved: AES-256-CTR (`iv‖be32`), evidence, and the precisely-scoped key residual** |
+| [`docs/20-keyset-evolution.md`](docs/20-keyset-evolution.md) | **Crypto-surface evolution across the 48-build archive: the n-token + fingerprint-blob + Hashcash/SHA-1 PoW addition, and per-build key rotation** |
 | [`deobfuscated/`](deobfuscated/) | Frozen, fully-deobfuscated HSW + HSJ JS bundles + the extracted WASM blob (regenerable via `tools/deobf.py`) |
 
 ---
