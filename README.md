@@ -171,12 +171,55 @@ decrypt + HSJ keys are needed.
 
 ### Auto-refresh
 
-A GitHub Actions workflow runs every 12 hours, re-extracts the keys for the current build, and commits the snapshot to [`data/keys.json`](data/keys.json). Historical per-build snapshots accumulate under [`data/archive/`](data/archive/). Manual runs available via the [Actions tab](https://github.com/CircuitSavage/hcaptcha-hsj-hsw-reversed/actions/workflows/refresh-keys.yml).
+A GitHub Actions workflow runs **every 10 minutes** (matching hCaptcha's build
+rotation), re-extracts the keys for the current build, and commits the snapshot
+to [`data/keys.json`](data/keys.json). Historical per-build snapshots accumulate
+under [`data/archive/`](data/archive/). On builds the extractor cannot parse it
+keeps the last known-good keys, marks them `stale: true`, and files an
+`auto-repair` issue. Manual runs available via the
+[Actions tab](https://github.com/CircuitSavage/hcaptcha-hsj-hsw-reversed/actions/workflows/refresh-keys.yml).
 
 ```bash
 # always-current keys without running the fetcher yourself:
 curl -L https://raw.githubusercontent.com/CircuitSavage/hcaptcha-hsj-hsw-reversed/main/data/keys.json
 ```
+
+### Live decryptor (no key extraction)
+
+hCaptcha's 2026 rebuild keeps the AES master keys inside the WASM/JS
+binaries (they never appear as plaintext in memory), so static key
+extraction cannot follow the current build. The **live decryptor** sidesteps
+this entirely: it loads the *current* `hsj.js` / `hsw.js` and drives their
+own encrypt/decrypt entry points. See
+[`docs/22-live-decryptor.md`](docs/22-live-decryptor.md).
+
+```python
+from hcaptcha.live import LiveDecryptor
+
+with LiveDecryptor() as d:              # fetches the latest bundles
+    pt = d.hsj_decrypt(ciphertext)      # server response -> plaintext
+    pt = d.hsw_decrypt(ciphertext)
+    ct = d.hsj_encrypt(plaintext)
+    tok = d.hsj_n_token(sitekey_json)   # fingerprint n-token
+    tok = d.hsw_solve(req_jwt)          # proof-of-work token
+```
+
+CLI / HTTP service:
+
+```bash
+python -m hcaptcha.live selftest
+python -m hcaptcha.live decrypt-hsw --hex 3a9f... --out pt.bin --out-encoding raw
+python -m hcaptcha.live serve --host 0.0.0.0 --port 8787   # POST /decrypt-hsw ...
+```
+
+The every-10-minutes [`live-bundle`](.github/workflows/live-bundle.yml)
+workflow keeps the live state verified and writes:
+
+| file | contents |
+| --- | --- |
+| [`data/current.json`](data/current.json) | clean downstream interface: version, Beijing time, per-scheme `ok` |
+| [`data/live_status.json`](data/live_status.json) | full selftest (bundle sizes, proofs) |
+| [`data/keys.json`](data/keys.json) | static (archived) keys + a `live` block with the current build |
 
 ---
 

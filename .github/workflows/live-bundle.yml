@@ -132,6 +132,26 @@ jobs:
           print('live ->', d['live'])
           PY
 
+      - name: Write clean current interface (data/current.json)
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          st = json.load(open('data/live_status.json', encoding='utf-8'))
+          cur = {
+              'generated_at_beijing': st.get('generated_at_beijing'),
+              'generated_at_readable': st.get('generated_at_readable'),
+              'version': st.get('version'),
+              'ok': st.get('ok'),
+              'hsj_ok': st.get('hsj', {}).get('ok'),
+              'hsw_ok': st.get('hsw', {}).get('ok'),
+              'decrypt_cli': 'python -m hcaptcha.live decrypt-hsj|decrypt-hsw',
+              'serve': 'python -m hcaptcha.live serve',
+          }
+          json.dump(cur, open('data/current.json', 'w', encoding='utf-8'), indent=2)
+          print('current ->', cur)
+          PY
+
       - name: Commit when the live version / status changed
         id: commit
         run: |
@@ -144,7 +164,7 @@ jobs:
             echo "live version unchanged — skipping commit"
             exit 0
           fi
-          git add data/live_status.json data/live_version.txt data/keys.json
+          git add data/live_status.json data/live_version.txt data/keys.json data/current.json
           git commit -m "auto: live bundle $(echo "$NEW" | cut -c1-40)"
           for attempt in 1 2 3 4 5; do
             if git push 2> push.err; then

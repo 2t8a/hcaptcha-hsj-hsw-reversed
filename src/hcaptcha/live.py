@@ -385,6 +385,111 @@ def _write_output(args, data: bytes) -> None:
                 sys.stdout.write(data.hex() + "\n")
 
 
+def serve(host: str = "127.0.0.1", port: int = 8787,
+          version: str | None = None) -> None:
+    """Run a small HTTP service that decrypts/encrypts on demand.
+
+    Endpoints (all POST unless noted):
+        GET  /status          -> JSON status (selftest)
+        POST /decrypt-hsj     -> body = ciphertext bytes, response = plaintext
+        POST /decrypt-hsw
+        POST /encrypt-hsj     -> body = plaintext, response = ciphertext
+        POST /encrypt-hsw
+        POST /n-token         -> body = sitekey JSON string, response = token
+        POST /solve           -> body = req JWT string, response = PoW token
+        POST /json            -> {"op": ..., "data_hex": ...} -> JSON result
+    """
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    d = LiveDecryptor(version)
+    d_version = d.version
+    lock = threading.Lock()
+
+    class _H(BaseHTTPRequestHandler):
+        server_version = "hcaptcha-live/1.0"
+
+        def _send(self, code: int, body: bytes = b"",
+                  ctype: str = "application/octet-stream") -> None:
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+
+        def _body(self) -> bytes:
+            n = int(self.headers.get("Content-Length") or 0)
+            return self.rfile.read(n) if n else b""
+
+        def do_GET(self):  # noqa: N802
+            if self.path in ("/status", "/"):
+                with lock:
+                    st = selftest(d_version)
+                self._send(200, json.dumps(st).encode(), "application/json")
+            else:
+                self._send(404, b"not found", "text/plain")
+
+        def do_POST(self):  # noqa: N802
+            path = self.path.split("?", 1)[0]
+            body = self._body()
+            try:
+                with lock:
+                    if path == "/decrypt-hsj":
+                        self._send(200, d.hsj_decrypt(body))
+                    elif path == "/decrypt-hsw":
+                        self._send(200, d.hsw_decrypt(body))
+                    elif path == "/encrypt-hsj":
+                        self._send(200, d.hsj_encrypt(body))
+                    elif path == "/encrypt-hsw":
+                        self._send(200, d.hsw_encrypt(body))
+                    elif path == "/n-token":
+                        self._send(200, (d.hsj_n_token(body.decode()) or "").encode())
+                    elif path == "/solve":
+                        self._send(200, (d.hsw_solve(body.decode()) or "").encode())
+                    elif path == "/json":
+                        req = json.loads(body.decode() or "{}")
+                        out = _dispatch_json(d, req)
+                        self._send(200, json.dumps(out).encode(), "application/json")
+                    else:
+                        self._send(404, b"not found", "text/plain")
+            except Exception as e:  # keep the service alive on per-request errors
+                self._send(500, str(e).encode(), "text/plain")
+
+        def log_message(self, *_a):  # silence default stderr logging
+            pass
+
+    srv = ThreadingHTTPServer((host, port), _H)
+    sys.stderr.write(f"hcaptcha.live serving on http://{host}:{port} "
+                     f"(version {d_version[:12]}...)\n")
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.server_close()
+        d.close()
+
+
+def _dispatch_json(d: "LiveDecryptor", req: dict) -> dict:
+    op = req.get("op")
+    data = req.get("data_hex")
+    raw = _hex_to_bytes(data) if data else b""
+    if op == "decrypt-hsj":
+        return {"ok": True, "out_hex": d.hsj_decrypt(raw).hex()}
+    if op == "decrypt-hsw":
+        return {"ok": True, "out_hex": d.hsw_decrypt(raw).hex()}
+    if op == "encrypt-hsj":
+        return {"ok": True, "out_hex": d.hsj_encrypt(raw).hex()}
+    if op == "encrypt-hsw":
+        return {"ok": True, "out_hex": d.hsw_encrypt(raw).hex()}
+    if op == "n-token":
+        return {"ok": True, "out": d.hsj_n_token((req.get("data") or ""))}
+    if op == "solve":
+        return {"ok": True, "out": d.hsw_solve((req.get("data") or ""))}
+    return {"ok": False, "error": f"unknown op {op!r}"}
+
+
 def _main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="hcaptcha.live",
                                 description="Live hsj/hsw black-box crypto")
@@ -397,6 +502,11 @@ def _main(argv=None) -> int:
     sp = sub.add_parser("selftest", help="load both bundles and run a round-trip")
     sp.add_argument("--json", action="store_true")
     sp.add_argument("--out", default=None, help="write status JSON to this path")
+    sp.add_argument("--version", default=None)
+
+    sp = sub.add_parser("serve", help="run an HTTP decrypt/encrypt service")
+    sp.add_argument("--host", default="127.0.0.1")
+    sp.add_argument("--port", type=int, default=8787)
     sp.add_argument("--version", default=None)
 
     for scheme in ("hsj", "hsw"):
@@ -422,6 +532,10 @@ def _main(argv=None) -> int:
     sp.add_argument("--version", default=None)
 
     args = p.parse_args(argv)
+
+    if args.cmd == "serve":
+        serve(args.host, args.port, args.version)
+        return 0
 
     if args.cmd == "fetch":
         m = fetch_and_cache(args.cache_dir, args.version)

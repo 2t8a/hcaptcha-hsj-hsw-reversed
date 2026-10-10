@@ -1,0 +1,10 @@
+{
+  "generated_at_beijing": "2026-10-10T22:36:22.221+08:00",
+  "generated_at_readable": "2026-10-10 22:36:22 (UTC+8)",
+  "version": "62a5974b946134e802f21c0722b7de01686d85dae0a8649687aad757643d88b6",
+  "ok": true,
+  "hsj_ok": true,
+  "hsw_ok": true,
+  "decrypt_cli": "python -m hcaptcha.live decrypt-hsj|decrypt-hsw",
+  "serve": "python -m hcaptcha.live serve"
+}
