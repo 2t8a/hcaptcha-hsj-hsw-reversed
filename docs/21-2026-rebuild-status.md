@@ -74,6 +74,33 @@ Next step: identify the function that receives the master-key pointer (likely
 or instrument `local.set` sites inside the key schedule to capture the key
 words directly.
 
+### HSW instrumentation harness (working)
+
+A first-call, sentinel-guarded argument dumper is verified working: patch a
+candidate function's entry to, guarded by a once-flag, write 8–128 words read
+through the function's own segmented reader (`fn 384` / `fn 482`-style) into a
+scratch region, then read it back via a synthesised `__peek32` export.
+Findings from it on a pinned build (`62a5974b…`, 695 574-byte WASM):
+
+* `fn 1005` (3-arg, fixslice overlap 4) `arg1` holds a fixslice-encoded buffer
+  whose `inv_bitslice` yields round-key-shaped 16-byte values that satisfy the
+  replication property (`K‖K`). However they do **not** chain through the
+  standard AES-256 key schedule, so `fn 1005` is a per-block fixslice
+  transform, not the key schedule.
+* `fn 899` `arg1` is re-randomised on every process start (IV / state), not a
+  key.
+* `fn 500` `arg1` is a table of small integers.
+* A full static scan of the 695 KB WASM and a full-dump scan of the 1.2 MB
+  linear memory (raw + `inv_bitslice`) both find no 32-byte window that
+  authenticates the ciphertext — consistent with the key living only in WASM
+  locals, exactly as the pre-rebuild bundle documented.
+
+Next step for HSW: dump the **first call's full i32-local set** of the
+candidate that is called exactly once (the key schedule), or patch the
+`local.set` that loads each key word. The dispatcher is `Pc` (found by magic),
+and the reachable fixslice set for encrypt is `{1005, 899, 500, …}` on this
+build.
+
 ## How to run the analysis
 
 ```bash
