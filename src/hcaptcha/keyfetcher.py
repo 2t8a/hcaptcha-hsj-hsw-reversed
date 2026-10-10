@@ -60,6 +60,7 @@ import time
 
 from .log import Logger
 from . import version as _v
+from .timeutil import beijing_now_iso, beijing_now_str
 
 
 class KeyFetcher:
@@ -343,6 +344,8 @@ class KeyFetcher:
 
         return {
             "version":     self.version,
+            "generated_at": beijing_now_iso(),
+            "generated_at_readable": beijing_now_str(),
             "hsj":         hsj_keys,
             "hsw":         hsw_keys,
             "cipher":      "AES-256-GCM",

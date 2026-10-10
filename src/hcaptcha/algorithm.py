@@ -106,7 +106,8 @@ class Hash:
 
     def xx64(self) -> str:
         seed = 5575352424011909552
-        return str(xxhash.xxh64_intdigest(self.data, seed=seed))
+        data = self.data if isinstance(self.data, (bytes, bytearray)) else self.data.encode()
+        return str(xxhash.xxh64_intdigest(data, seed=seed))
 
 class OtherAlgorithms:
     def __init__(self) -> None:

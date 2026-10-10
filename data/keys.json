@@ -42,5 +42,7 @@
     "date_format": "YYYYMMDD (UTC)",
     "verified_in_wasm": true,
     "wasm_evidence": "SHA-1 K-constants 0x5A827999 and 0x6ED9EBA1 found as i32.const literals in code section"
-  }
+  },
+  "generated_at": "2026-10-10T22:27:57.724+08:00",
+  "generated_at_readable": "2026-10-10 22:27:57 (UTC+8)"
 }

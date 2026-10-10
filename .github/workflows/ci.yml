@@ -38,10 +38,13 @@ jobs:
 
   # Live end-to-end smoke test (depends on the current hCaptcha build +
   # network + Node/jsdom). May go red on build rotation / CDN hiccups;
-  # the `unit` job above is the authoritative correctness gate.
+  # the `unit` job above is the authoritative correctness gate. Marked
+  # continue-on-error so a rotated/unparseable live build does not turn
+  # the whole CI red — the refresh-keys workflow's auto-repair tracks it.
   smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v5

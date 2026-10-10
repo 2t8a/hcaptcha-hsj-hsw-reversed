@@ -103,6 +103,8 @@ jobs:
           VERSION: ${{ steps.selftest.outputs.version }}
         run: |
           set -euo pipefail
+          # version+ok only — used for change detection. The precise
+          # Beijing timestamp lives in data/live_status.json (generated_at_beijing).
           echo "version=$VERSION ok=$OK" > data/live_version.txt
 
       - name: Commit when the live version / status changed

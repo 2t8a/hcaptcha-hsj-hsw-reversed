@@ -38,6 +38,7 @@ import requests
 from .log import Logger
 from .tools.js_runtime import JsRuntime
 from . import version as _v
+from .timeutil import beijing_now_iso, beijing_now_str
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +290,10 @@ def fetch_and_cache(cache_dir: str = "data/live",
     manifest. Returns the manifest dict."""
     version = version or _v.latest_version()
     os.makedirs(cache_dir, exist_ok=True)
-    manifest = {"version": version, "fetched_at": int(time.time()), "files": {}}
+    manifest = {"version": version,
+                "fetched_at": int(time.time()),
+                "fetched_at_beijing": beijing_now_iso(),
+                "files": {}}
     for name in ("hsj.js", "hsw.js"):
         r = requests.get(_v.asset_url(version, name), timeout=90)
         r.raise_for_status()
@@ -309,6 +313,8 @@ def selftest(version: str | None = None) -> dict:
     Returns a status dict (never raises for a failed scheme — reports it)."""
     version = version or _v.latest_version()
     out = {"version": version, "checked_at": int(time.time()),
+           "generated_at_beijing": beijing_now_iso(),
+           "generated_at_readable": beijing_now_str(),
            "hsj": {}, "hsw": {}, "ok": False}
     try:
         hsj = LiveHSJ(version)

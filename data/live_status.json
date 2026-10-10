@@ -1,6 +1,8 @@
 {
   "version": "62a5974b946134e802f21c0722b7de01686d85dae0a8649687aad757643d88b6",
-  "checked_at": 1791642275,
+  "checked_at": 1791642477,
+  "generated_at_beijing": "2026-10-10T22:27:57.954+08:00",
+  "generated_at_readable": "2026-10-10 22:27:57 (UTC+8)",
   "hsj": {
     "ok": true,
     "ciphertext_bytes": 41
