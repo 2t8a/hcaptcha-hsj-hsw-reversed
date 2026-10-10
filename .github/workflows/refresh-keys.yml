@@ -21,8 +21,11 @@ name: Refresh keys
 
 on:
   schedule:
-    # 00:00 and 12:00 UTC every day
-    - cron: "0 0,12 * * *"
+    # Every 10 minutes. hCaptcha rotates its asset build frequently
+    # (~10 min); polling at the same cadence maximises the chance of
+    # catching a build whose structure the extractor understands, and
+    # keeps data/keys.json as fresh as possible once extraction succeeds.
+    - cron: "*/10 * * * *"
   workflow_dispatch:
     inputs:
       force:
