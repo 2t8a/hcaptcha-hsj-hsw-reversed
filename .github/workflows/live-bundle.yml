@@ -1,0 +1,191 @@
+name: Live bundle
+
+# Fully-automatic live-decryptor pipeline.
+#
+# hCaptcha rotates its asset build ~every 10 minutes and the 2026 rebuild
+# keeps the AES master keys inside WASM/JS registers (they never appear as
+# plaintext in memory), so key extraction is not possible. Instead this
+# workflow keeps the *live bundles* verified: it loads the current
+# hsj.js / hsw.js, drives their own encrypt entry points as a liveness
+# proof, and commits a small status file. Downstream decryption uses
+# `python -m hcaptcha.live decrypt-{hsj,hsw}` against the same live bundle,
+# so no raw key is ever required.
+#
+# Auto-update : every 10 minutes + manual dispatch.
+# Auto-repair : retries, never fails the schedule destructively, and
+#               files/updates an `auto-repair` issue when the bundles stop
+#               loading.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: live-bundle
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      ok: ${{ steps.selftest.outputs.ok }}
+      version: ${{ steps.selftest.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: System libraries for canvas
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev
+
+      - name: Install Python deps
+        run: pip install pycryptodome xxhash msgpack jsbeautifier requests
+
+      - name: Install Node deps
+        run: |
+          set -euo pipefail
+          if ! npm ci --no-audit --no-fund; then
+            echo "::warning::npm ci failed — repairing with a clean cache"
+            npm cache clean --force
+            rm -rf node_modules
+            npm ci --no-audit --no-fund
+          fi
+
+      - name: Live bundle self-test
+        id: selftest
+        continue-on-error: true
+        env:
+          PYTHONPATH: src
+        run: |
+          set -uo pipefail
+          ok=0
+          for attempt in 1 2 3; do
+            if python -m hcaptcha.live selftest --json --out data/live_status.json; then
+              ok=1
+              break
+            fi
+            echo "::warning::live self-test attempt $attempt failed"
+            sleep $((attempt * 15))
+          done
+          VERSION=$(python -c "import json;print(json.load(open('data/live_status.json') or '{}').get('version',''))" 2>/dev/null || echo "")
+          echo "ok=$([ $ok -eq 1 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [ "$ok" -ne 1 ]; then
+            echo "::warning::live bundle self-test failed on all attempts"
+          fi
+
+      - name: Record current live version
+        env:
+          OK: ${{ steps.selftest.outputs.ok }}
+          VERSION: ${{ steps.selftest.outputs.version }}
+        run: |
+          set -euo pipefail
+          echo "version=$VERSION ok=$OK" > data/live_version.txt
+
+      - name: Commit when the live version / status changed
+        id: commit
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          NEW=$(cat data/live_version.txt)
+          OLD=$(git show HEAD:data/live_version.txt 2>/dev/null || echo "")
+          if [ "$NEW" = "$OLD" ]; then
+            echo "live version unchanged — skipping commit"
+            exit 0
+          fi
+          git add data/live_status.json data/live_version.txt
+          git commit -m "auto: live bundle $(echo "$NEW" | cut -c1-40)"
+          for attempt in 1 2 3 4 5; do
+            if git push 2> push.err; then
+              echo "pushed (attempt $attempt)"; exit 0
+            fi
+            if ! grep -q "rejected\|non-fast-forward\|fetch first" push.err; then
+              cat push.err; exit 1
+            fi
+            git fetch origin main
+            git -c rebase.autoStash=true rebase origin/main || git rebase --abort || true
+            sleep $((attempt * 2))
+          done
+          echo "::error::push still rejected"; exit 1
+
+      - name: Auto-repair — report live bundle failure
+        if: steps.selftest.outputs.ok != 'true'
+        uses: actions/github-script@v7
+        env:
+          VERSION: ${{ steps.selftest.outputs.version }}
+        with:
+          script: |
+            const title = "auto-repair: live bundle self-test failed";
+            const body = [
+              "The live hsj.js / hsw.js bundles could not be loaded or driven.",
+              "",
+              `- Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              `- Version: \`${process.env.VERSION || "unknown"}\``,
+              "",
+              "This usually means the obfuscation changed in a way that breaks",
+              "the JS sandbox (jsdom / canvas) or the bundle's boot sequence.",
+              "See `docs/22-live-decryptor.md`.",
+            ].join("\n");
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: "open", labels: "auto-repair",
+            });
+            const existing = issues.data.find(i => i.title === title);
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.number, body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: ["auto-repair"],
+              });
+            }
+
+      - name: Auto-repair — resolved
+        if: steps.selftest.outputs.ok == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = "auto-repair: live bundle self-test failed";
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: "open", labels: "auto-repair",
+            });
+            const existing = issues.data.find(i => i.title === title);
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.number,
+                body: "✅ Live bundle self-test passed again — closing.",
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.number, state: "closed",
+              });
+            }

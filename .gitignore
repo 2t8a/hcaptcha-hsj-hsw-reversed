@@ -224,3 +224,6 @@ deobfuscated_current/
 
 # Local Claude Code harness state
 .claude/
+
+# cached live bundles (fetched on demand; never committed)
+data/live/
