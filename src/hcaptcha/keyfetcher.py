@@ -344,8 +344,9 @@ class KeyFetcher:
 
         return {
             "version":     self.version,
-            "generated_at": beijing_now_iso(),
-            "generated_at_readable": beijing_now_str(),
+            "keys_extracted_at": beijing_now_iso(),
+            "keys_extracted_at_readable": beijing_now_str(),
+            "stale":       False,
             "hsj":         hsj_keys,
             "hsw":         hsw_keys,
             "cipher":      "AES-256-GCM",

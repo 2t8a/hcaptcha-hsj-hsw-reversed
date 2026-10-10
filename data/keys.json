@@ -43,6 +43,10 @@
     "verified_in_wasm": true,
     "wasm_evidence": "SHA-1 K-constants 0x5A827999 and 0x6ED9EBA1 found as i32.const literals in code section"
   },
-  "generated_at": "2026-10-10T22:27:57.724+08:00",
-  "generated_at_readable": "2026-10-10 22:27:57 (UTC+8)"
+  "keys_extracted_at": "2026-08-03T22:48:55.000+08:00",
+  "keys_extracted_at_readable": "2026-08-03 22:48:55 (UTC+8)",
+  "file_updated_at": "2026-10-10T22:34:32.639+08:00",
+  "file_updated_at_readable": "2026-10-10 22:34:32 (UTC+8)",
+  "stale": true,
+  "stale_reason": "hCaptcha rotated to an unextractable 2026 build; these keys are from the last successful refresh"
 }
