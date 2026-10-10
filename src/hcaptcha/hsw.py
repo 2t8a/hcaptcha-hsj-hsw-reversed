@@ -186,18 +186,45 @@ def _find_key_schedule_for_magic(mod: WasmModule, vc_idx: int,
             if n1 == "i32.eq" and n2 == "if":
                 depth = 1
                 j = i + 3
+                roots = []
                 while j < len(instrs):
                     nj, opsj, _, _ = instrs[j]
                     if nj in ("block", "loop", "if"): depth += 1
                     elif nj == "end":
                         depth -= 1
                         if depth == 0: break
-                    elif nj == "call" and opsj and opsj[0] in fixslice_with_size:
-                        # Direct hit — the magic's if-block calls a
-                        # fixslice32 (i32,i32)->() function. That's
-                        # the key schedule.
-                        return opsj[0]
+                    elif nj == "call" and opsj:
+                        # Direct hit — key schedule called inline.
+                        if opsj[0] in fixslice_with_size:
+                            return opsj[0]
+                        roots.append(opsj[0])
                     j += 1
+                # Newer builds nest the key schedule one or more calls
+                # deeper (dispatcher -> direction wrapper -> crypto fn ->
+                # key schedule). Breadth-first search from the magic
+                # branch's direct callees and return the first fixslice32
+                # (i32,i32)->() function reachable. The caller verifies
+                # the recovered key by AEAD round-trip, so a wrong pick
+                # is rejected rather than silently returned.
+                seen = set()
+                frontier = list(roots)
+                for _ in range(6):
+                    nxt = []
+                    for fi in frontier:
+                        if fi in seen or fi not in {f["func_idx"] for f in mod.functions}:
+                            continue
+                        seen.add(fi)
+                        if fi in fixslice_with_size:
+                            return fi
+                        try:
+                            for nnn, ooo, _, _ in mod.decode_function(fi):
+                                if nnn == "call" and ooo:
+                                    nxt.append(ooo[0])
+                        except Exception:
+                            pass
+                    if not nxt:
+                        break
+                    frontier = nxt
     raise RuntimeError(
         f"no key-schedule call found inside magic-{magic} if-block in vc")
 
@@ -476,7 +503,16 @@ class HSWKeyFetcher:
         ct  = blob[12:12+len(pt)]
         tag = blob[12+len(pt):12+len(pt)+16]
         cipher = AES.new(enc_master, AES.MODE_GCM, nonce=iv)
-        decoded = cipher.decrypt_and_verify(ct, tag)
+        try:
+            decoded = cipher.decrypt_and_verify(ct, tag)
+        except ValueError as e:
+            self.log.info(
+                f"encrypt-key verify failed: captured={enc_master.hex()} "
+                f"blob={blob.hex()}",
+                start=t0, end=time.time())
+            raise RuntimeError(
+                f"encrypt key verification failed: {e} "
+                f"(captured {enc_master.hex()})")
         if decoded != pt:
             raise RuntimeError("encrypt key verification failed: pt mismatch")
         self.log.info("encrypt key verified OK (AES-256-GCM round-trip)",
