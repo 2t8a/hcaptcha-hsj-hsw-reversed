@@ -60,6 +60,21 @@ Because the asset build rotates roughly every 10 minutes, the decryptor
 always fetches the bundle it is about to use — it never depends on a stale
 snapshot.
 
+### What is actually obtainable (and used)
+
+The only live, usable material is the bundle itself plus the version the
+server hands out. Everything the pipeline records is therefore obtained at
+run time:
+
+* `data/live_status.json` — live version, Beijing timestamp, per-scheme
+  encrypt proof, and the fetched bundle sizes.
+* `data/keys.json.live` — the same live version / timestamp / ok flags,
+  merged in so the single URL people watch also shows current reality
+  alongside the archived static keys.
+* `data/keys.json.keys_extracted_at` — when the *static* key values were
+  produced (2026-08-03, last successful refresh); `stale: true` marks them
+  as not matching the current build.
+
 ## Why not extract the keys?
 
 See `docs/21-2026-rebuild-status.md` for the full investigation. In short:

@@ -45,8 +45,20 @@
   },
   "keys_extracted_at": "2026-08-03T22:48:55.000+08:00",
   "keys_extracted_at_readable": "2026-08-03 22:48:55 (UTC+8)",
-  "file_updated_at": "2026-10-10T22:34:32.639+08:00",
-  "file_updated_at_readable": "2026-10-10 22:34:32 (UTC+8)",
+  "file_updated_at": "2026-10-10T22:36:25.167+08:00",
+  "file_updated_at_readable": "2026-10-10 22:36:25 (UTC+8)",
   "stale": true,
-  "stale_reason": "hCaptcha rotated to an unextractable 2026 build; these keys are from the last successful refresh"
+  "stale_reason": "hCaptcha rotated to an unextractable 2026 build; these static keys are from the last successful refresh",
+  "use_instead": "live black-box decryptor: `python -m hcaptcha.live decrypt-hsj|decrypt-hsw` (see data/live_status.json)",
+  "live_status": "data/live_status.json",
+  "live": {
+    "version": "62a5974b946134e802f21c0722b7de01686d85dae0a8649687aad757643d88b6",
+    "generated_at_beijing": "2026-10-10T22:36:22.221+08:00",
+    "generated_at_readable": "2026-10-10 22:36:22 (UTC+8)",
+    "ok": true,
+    "hsj_ok": true,
+    "hsw_ok": true,
+    "hsj_bundle_bytes": 2113265,
+    "hsw_bundle_bytes": 1112787
+  }
 }

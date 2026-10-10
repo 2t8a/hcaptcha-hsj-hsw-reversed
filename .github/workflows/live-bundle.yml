@@ -107,6 +107,31 @@ jobs:
           # Beijing timestamp lives in data/live_status.json (generated_at_beijing).
           echo "version=$VERSION ok=$OK" > data/live_version.txt
 
+      - name: Merge live status into data/keys.json
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          kp = 'data/keys.json'
+          try:
+              d = json.load(open(kp, encoding='utf-8'))
+          except Exception:
+              d = {}
+          st = json.load(open('data/live_status.json', encoding='utf-8'))
+          d['live'] = {
+              'version': st.get('version'),
+              'generated_at_beijing': st.get('generated_at_beijing'),
+              'generated_at_readable': st.get('generated_at_readable'),
+              'ok': st.get('ok'),
+              'hsj_ok': st.get('hsj', {}).get('ok'),
+              'hsw_ok': st.get('hsw', {}).get('ok'),
+              'hsj_bundle_bytes': st.get('hsj_bundle_bytes'),
+              'hsw_bundle_bytes': st.get('hsw_bundle_bytes'),
+          }
+          json.dump(d, open(kp, 'w', encoding='utf-8'), indent=2)
+          print('live ->', d['live'])
+          PY
+
       - name: Commit when the live version / status changed
         id: commit
         run: |
@@ -119,7 +144,7 @@ jobs:
             echo "live version unchanged — skipping commit"
             exit 0
           fi
-          git add data/live_status.json data/live_version.txt
+          git add data/live_status.json data/live_version.txt data/keys.json
           git commit -m "auto: live bundle $(echo "$NEW" | cut -c1-40)"
           for attempt in 1 2 3 4 5; do
             if git push 2> push.err; then

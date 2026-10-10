@@ -310,12 +310,25 @@ def fetch_and_cache(cache_dir: str = "data/live",
 def selftest(version: str | None = None) -> dict:
     """Load both bundles and run an encrypt round-trip through each.
 
-    Returns a status dict (never raises for a failed scheme — reports it)."""
+    Returns a status dict (never raises for a failed scheme — reports it).
+    Everything recorded here is *obtained live*: the checksiteconfig
+    version, the fetched bundle sizes, the Beijing timestamp and the
+    encrypt round-trip proof."""
     version = version or _v.latest_version()
-    out = {"version": version, "checked_at": int(time.time()),
+    out = {"version": version,
+           "live_version": version,
+           "checked_at": int(time.time()),
            "generated_at_beijing": beijing_now_iso(),
            "generated_at_readable": beijing_now_str(),
            "hsj": {}, "hsw": {}, "ok": False}
+    for name in ("hsj", "hsw"):
+        try:
+            r = requests.get(_v.asset_url(version, name + ".js"), timeout=60)
+            r.raise_for_status()
+            out[name + "_bundle_bytes"] = len(r.text)
+        except Exception as e:
+            out[name + "_bundle_bytes"] = None
+            out[name + "_bundle_error"] = str(e)[:200]
     try:
         hsj = LiveHSJ(version)
         ct = hsj.encrypt(b"live-selftest")
