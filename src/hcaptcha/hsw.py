@@ -79,18 +79,35 @@ def _read_magics_from_deobf(version: str) -> dict:
     # any `obj.method(<magic>` call. The magic is a large number; the only other
     # call before it is the allocator `gc(-16)` (tiny arg), so requiring a 5+
     # digit first arg picks the dispatcher call regardless of its rotated name.
-    enc_match = re.search(
-        r"encrypt_req_data: function \([^)]*\) \{[^}]*?\b\w+\.\w+\((-?\d{5,})",
-        src, re.S)
-    dec_match = re.search(
-        r"decrypt_resp_data: function \([^)]*\) \{[^}]*?\b\w+\.\w+\((-?\d{5,})",
-        src, re.S)
-    if not enc_match or not dec_match:
+    #
+    # Two export shapes exist across builds:
+    #   a) `encrypt_req_data: function (...) { ... obj.method(MAGIC ...`
+    #   b) `["encrypt_req_data"]: u3,`  with `var u3 = ... ? function(a){...}`
+    def _magic_for(marker: str):
+        m = re.search(
+            r'\[?"?' + re.escape(marker) +
+            r'"?\]?\s*:\s*(?:function\s*\([^)]*\)\s*\{|([A-Za-z_$][\w$]*))', src)
+        if not m:
+            return None
+        if m.group(1):
+            fn = m.group(1)
+            fm = (re.search(r'function\s+' + re.escape(fn) + r'\s*\([^)]*\)\s*\{', src)
+                  or re.search(r'\b' + re.escape(fn) +
+                               r'\s*=\s*[\s\S]{0,200}?function\s*\([^)]*\)\s*\{', src))
+            body = src[fm.end():fm.end() + 1200] if fm else ''
+        else:
+            body = src[m.end():m.end() + 1200]
+        mm = re.search(r'\b\w+\.\w+\((-?\d{5,})', body)
+        return int(mm.group(1)) if mm else None
+
+    enc_magic = _magic_for('encrypt_req_data')
+    dec_magic = _magic_for('decrypt_resp_data')
+    if enc_magic is None or dec_magic is None:
         raise RuntimeError(
             "could not find encrypt/decrypt magics in deobf source")
     return {
-        "encrypt_magic": int(enc_match.group(1)),
-        "decrypt_magic": int(dec_match.group(1)),
+        "encrypt_magic": enc_magic,
+        "decrypt_magic": dec_magic,
     }
 
 
@@ -113,6 +130,30 @@ def _find_dispatcher_func(mod: WasmModule) -> int:
         if len(params) >= 8 and len(results) == 0:
             return ex["idx"]
     raise RuntimeError("vc dispatcher not found")
+
+
+def _find_dispatcher_for_magics(mod: WasmModule, magics: dict) -> int:
+    """Locate the dispatcher function by finding which function's body
+    contains the encrypt/decrypt magic constants. The export name rotates
+    across builds (vc -> Pc -> ...) and the arity changes (6 args now),
+    so keying on the magic literals is the only stable anchor."""
+    targets = {m & 0xffffffff for m in magics.values()}
+    best = None
+    best_count = 0
+    for f in mod.functions:
+        try:
+            instrs = mod.decode_function(f["func_idx"])
+        except Exception:
+            continue
+        cnt = sum(1 for n, ops, _, _ in instrs
+                  if n == "i32.const" and ops
+                  and (ops[0] & 0xffffffff) in targets)
+        if cnt > best_count:
+            best_count = cnt
+            best = f["func_idx"]
+    if best is None or best_count == 0:
+        raise RuntimeError("dispatcher containing the magics not found")
+    return best
 
 
 def _find_key_schedule_for_magic(mod: WasmModule, vc_idx: int,
@@ -284,8 +325,8 @@ class HSWKeyFetcher:
         info = HSWAnalyzer(self.version, log=self.log).analyze()
         orig_wasm = bytes.fromhex(info["wasm_bytes_hex"])
         mod = WasmModule(orig_wasm)
-        vc_idx = _find_dispatcher_func(mod)
-        self.log.info(f"dispatcher vc = func {vc_idx}",
+        vc_idx = _find_dispatcher_for_magics(mod, magics)
+        self.log.info(f"dispatcher = func {vc_idx}",
                       start=t0, end=time.time())
 
         # 3. From each magic, locate the key-schedule call directly

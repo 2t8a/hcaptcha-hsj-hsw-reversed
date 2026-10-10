@@ -63,10 +63,25 @@ const src = fs.readFileSync(INPUT, 'utf-8');
 // =============================================================================
 // STEP A — Detect string decoders
 // =============================================================================
+// Legacy builds mark decoders with `void 0 === NAME.prop`.
 const decoderMarkerRe = /void 0 === (\w+)\.(\w{6})\b/g;
 const decoderNames = new Set();
 let mm;
 while ((mm = decoderMarkerRe.exec(src))) decoderNames.add(mm[1]);
+
+// Newer builds (2026+) declare decoders as `NAME = function(arg){ ...
+// if (void 0 !== CACHE[arg]) return CACHE[arg]; ... }`. Detect every such
+// memoised decoder and recover its assigned name by scanning backwards to
+// the enclosing `NAME = function(arg){` declarator.
+const decoderMemoRe = /if\s*\(\s*void 0\s*!==\s*([A-Za-z_$][\w$]*)\s*\[\s*([A-Za-z_$][\w$]*)\s*\]\s*\)\s*return\s*\1\s*\[\s*\2\s*\]/g;
+while ((mm = decoderMemoRe.exec(src))) {
+    const arg = mm[2];
+    const back = src.slice(Math.max(0, mm.index - 900), mm.index);
+    const fRe = new RegExp('([A-Za-z_$][\\w$]*)\\s*=\\s*function\\s*\\(\\s*' + arg + '[^)]*\\)\\s*\\{', 'g');
+    let fm = null, f;
+    while ((f = fRe.exec(back))) fm = f;
+    if (fm) decoderNames.add(fm[1]);
+}
 if (decoderNames.size === 0) { console.error('no decoder marker pattern found'); process.exit(1); }
 console.error(`[deobf] decoders: ${[...decoderNames].join(',')}`);
 
