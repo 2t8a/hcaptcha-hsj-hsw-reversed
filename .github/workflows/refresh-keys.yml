@@ -1,22 +1,39 @@
 name: Refresh keys
 
-# Runs every 12 hours and on manual dispatch. Fetches the current hCaptcha
-# build, extracts all SIX master keys (3 HSJ + 3 HSW including the n_key
-# captured at the AES encrypt call site), writes them to data/keys.json,
-# and archives the snapshot at data/archive/<version>.json. Commits +
-# pushes only if the build hash rotated (otherwise the run is a no-op).
+# Auto-update + auto-repair key refresh.
 #
-# Average runtime: ~3 minutes end-to-end (5 extracted + 1 capture +
-# 2 verification round-trips). Well within the free tier.
+# Auto-update:
+#   * Runs every 12 hours (00:00 / 12:00 UTC) and on manual dispatch.
+#   * Fetches the current hCaptcha build, extracts all SIX master keys
+#     (3 HSJ + 3 HSW incl. the n_key captured at the AES encrypt call site),
+#     writes data/keys.json, and archives data/archive/<version>.json.
+#   * Commits + pushes only when the build hash rotated.
+#
+# Auto-repair:
+#   * Each extraction attempt is retried with backoff (rate limits).
+#   * A failed / partial extraction NEVER overwrites the last known-good
+#     keys and NEVER fails the scheduled run on the default branch.
+#   * On persistent failure the workflow opens (or updates) a tracked
+#     issue describing exactly what broke, so the extractor can be fixed.
+#   * The dependency install is retried once with a clean npm cache.
+#
+# Average runtime: ~3 minutes end-to-end on the happy path.
 
 on:
   schedule:
     # 00:00 and 12:00 UTC every day
     - cron: "0 0,12 * * *"
-  workflow_dispatch: {}      # manual trigger from the Actions tab
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force a commit even if the build hash is unchanged"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write            # so the bot can push to main
+  issues: write              # so auto-repair can file a tracking issue
 
 concurrency:
   group: refresh-keys
@@ -25,13 +42,17 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    outputs:
+      ok: ${{ steps.extract.outputs.ok }}
+      version: ${{ steps.extract.outputs.version }}
+      reason: ${{ steps.extract.outputs.reason }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -54,34 +75,56 @@ jobs:
       - name: Install Python deps
         run: pip install pycryptodome xxhash msgpack jsbeautifier requests
 
-      - name: Install Node deps
-        # `npm ci` (not `npm install`) — deterministic install from the
-        # lockfile that NEVER modifies package-lock.json. `npm install`
-        # silently rewrites the lockfile when npm's lockfile schema
-        # differs from what's checked in, leaving the file as an
-        # unstaged tracked-file modification that breaks `git rebase`
-        # in the retry-on-push-rejection block below.
-        run: npm ci --no-audit --no-fund
+      - name: Install Node deps (auto-repair — retry with clean cache)
+        run: |
+          set -euo pipefail
+          # `npm ci` (not `npm install`) — deterministic install from the
+          # lockfile that NEVER modifies package-lock.json. `npm install`
+          # silently rewrites the lockfile when npm's lockfile schema
+          # differs from what's checked in, leaving the file as an
+          # unstaged tracked-file modification that breaks `git rebase`
+          # in the retry-on-push-rejection block below.
+          if ! npm ci --no-audit --no-fund; then
+            echo "::warning::npm ci failed — repairing with a clean cache"
+            npm cache clean --force
+            rm -rf node_modules
+            npm ci --no-audit --no-fund
+          fi
 
       - name: Extract all six keys
         id: extract
+        # The auto-repair design: never let a rotated/broken build take
+        # the scheduler down. The dedicated repair step below reacts to
+        # ok != true.
+        continue-on-error: true
         env:
           PYTHONPATH: src
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
-          # Run the fetcher with up to 3 retries (hCaptcha sometimes rate-limits).
-          for attempt in 1 2 3; do
+          ok=0
+          reason=""
+          # Up to 4 attempts (hCaptcha sometimes rate-limits).
+          for attempt in 1 2 3 4; do
             if python -m hcaptcha > new_keys.json 2> fetch.log; then
+              ok=1
               break
             fi
-            echo "::warning::extraction attempt $attempt failed:"
-            tail -n 20 fetch.log
+            reason="$(tail -n 1 fetch.log || true)"
+            echo "::warning::extraction attempt $attempt failed: $reason"
+            tail -n 25 fetch.log || true
             sleep $((attempt * 30))
           done
 
-          # Validate JSON parses + has all six keys + verification flags
-          python <<'EOF'
+          if [ "$ok" -ne 1 ]; then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "reason=$reason" >> "$GITHUB_OUTPUT"
+            echo "::warning::auto-repair: extraction failed on all attempts"
+            exit 0
+          fi
+
+          # Validate JSON parses + has all six keys + verification flags.
+          if ! python <<'EOF'
           import json, sys
           d = json.load(open("new_keys.json"))
           required_hsj = {"n_key", "response_decrypt_key", "payload_encrypt_key"}
@@ -89,6 +132,11 @@ jobs:
           missing = []
           if not required_hsj.issubset(d.get("hsj", {})): missing.append("hsj")
           if not required_hsw.issubset(d.get("hsw", {})): missing.append("hsw")
+          # every key must be a non-empty 64-char hex string
+          for group in ("hsj", "hsw"):
+              for k, v in d.get(group, {}).items():
+                  if not (isinstance(v, str) and len(v) == 64):
+                      missing.append(f"{group}.{k}")
           # Verify the 4 HSW verification flags
           verified = d.get("verified", {})
           for k in ("hsw_encrypt_key", "hsw_decrypt_key", "hsw_n_key",
@@ -101,12 +149,19 @@ jobs:
           print(f"  hsw.n_key  : {d['hsw']['n_key'][:16]}...")
           print(f"  fp_blob_key: {d['hsw']['fingerprint_blob_key'][:16]}...")
           EOF
+          then
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "reason=output validation failed (see log)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-          # Pull version + cipher metadata for the commit message
           VERSION=$(python -c "import json; print(json.load(open('new_keys.json'))['version'])")
+          echo "ok=true"       >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "reason=ok"     >> "$GITHUB_OUTPUT"
 
       - name: Write current + archive
+        if: steps.extract.outputs.ok == 'true'
         env:
           VERSION: ${{ steps.extract.outputs.version }}
         run: |
@@ -117,23 +172,26 @@ jobs:
           ls -la data/ data/archive/ | tail -n 20
 
       - name: Commit + push if changed
+        if: steps.extract.outputs.ok == 'true'
         env:
           VERSION: ${{ steps.extract.outputs.version }}
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/
-          if git diff --staged --quiet; then
+          if [ "${FORCE:-false}" != "true" ] && git diff --staged --quiet; then
             echo "build hash unchanged — skipping commit"
             exit 0
           fi
-          git commit -m "auto: refresh keys for build ${VERSION:0:12}"
+          git commit -m "auto: refresh keys for build ${VERSION:0:12}" || {
+            echo "nothing to commit"; exit 0; }
 
           # Reset any unstaged modifications to tracked files (e.g. a
-          # lockfile npm touched, line-ending drift) so the rebase
-          # below sees a clean working tree. Our commit is preserved.
-          git checkout -- .
+          # lockfile npm touched, line-ending drift) so the rebase below
+          # sees a clean working tree. Our commit is preserved.
+          git checkout -- . || true
 
           # Retry up to 5 times: another push may land between fetch and push.
           for attempt in 1 2 3 4 5; do
@@ -147,9 +205,88 @@ jobs:
             fi
             echo "push rejected (attempt $attempt) — rebasing on origin/main"
             git fetch origin main
-            git rebase origin/main
+            git rebase origin/main || git rebase --abort || true
             sleep $((attempt * 2))
           done
 
           echo "::error::push still rejected after 5 attempts"
           exit 1
+
+      # -----------------------------------------------------------------
+      # Auto-repair: file / update a tracking issue with the exact failure
+      # so the extractor can be repaired. Keeps last known-good keys.
+      # -----------------------------------------------------------------
+      - name: Auto-repair — report extraction failure
+        if: steps.extract.outputs.ok != 'true'
+        uses: actions/github-script@v7
+        env:
+          REASON: ${{ steps.extract.outputs.reason }}
+        with:
+          script: |
+            const reason = (process.env.REASON || "unknown").slice(0, 1500);
+            const title = "auto-repair: key extraction failed";
+            const body = [
+              "The scheduled **Refresh keys** run could not extract the master keys.",
+              "",
+              `- Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              `- Workflow: .github/workflows/refresh-keys.yml`,
+              `- Failure: \`${reason}\``,
+              "",
+              "The last known-good `data/keys.json` was **left untouched**.",
+              "",
+              "hCaptcha most likely rotated/restructured its bundle. " +
+              "Update the extractor (see `docs/04-key-extraction.md`) — the " +
+              "`hcaptcha.hsj` / `hcaptcha.hsw` modules raise an explicit " +
+              "\"pattern not found\" error in that case.",
+            ].join("\n");
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: "auto-repair",
+            });
+            const existing = issues.data.find(i => i.title === title);
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ["auto-repair"],
+              });
+            }
+
+      - name: Auto-repair — fix resolved
+        if: steps.extract.outputs.ok == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = "auto-repair: key extraction failed";
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: "auto-repair",
+            });
+            const existing = issues.data.find(i => i.title === title);
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body: "✅ Key extraction succeeded again — closing auto-repair issue.",
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                state: "closed",
+              });
+            }

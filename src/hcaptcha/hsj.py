@@ -41,8 +41,20 @@ class HSJKeyFetcher:
         src = "let dumped_keys = [];\n" + self.hsj_src
         lines = jsbeautifier.beautify(src).split("\n")
 
+        # The AES-256 key-schedule prologue has taken two equivalent
+        # shapes across build rotations:
+        #   a) `ve = n = ve - 480 | 0, <memcpy>(r = memset(n,0,480), key, key), ...`
+        #      (builds up to ~912faf5f; beautified as `- 480 |`)
+        #   b) the stack pointer add form `+ -480` / `- 480` in other
+        #      reassociations.
+        # We accept any stack-frame computation that involves a 480-byte
+        # frame so the extractor keeps working when the obfuscator
+        # reassociates the expression.
+        frame_patterns = ("- 480 |", "+ -480 |", "-480|", "- 480|",
+                          "+ 480 |")
+        injections = 0
         for i in range(len(lines) - 10):
-            if "- 480 |" not in lines[i]:
+            if not any(p in lines[i] for p in frame_patterns):
                 continue
             try:
                 key_var = lines[i].split("480), ")[1].split(", ")[0]
@@ -59,8 +71,20 @@ class HSJKeyFetcher:
                 f"{anchor}, dumped_keys.push(Array.from("
                 f"new Uint8Array({memory}.buffer.slice({key_var}, {key_var} + 32))))",
             )
+            injections += 1
             self.log.debug("injected key dump", start=start, end=time.time())
 
+        # No 480-byte key-schedule frame found: hCaptcha has rotated to a
+        # structurally different build. Fail with an actionable message
+        # instead of a bare IndexError later on, so the refresh workflow's
+        # auto-repair path can detect and report it.
+        if injections == 0:
+            raise RuntimeError(
+                "HSJ key-schedule pattern not found in build "
+                f"{self.version[:12]} — hCaptcha has restructured hsj.js. "
+                "The extractor needs an update (see docs/04-key-extraction.md). "
+                "This is the auto-repair signal for the refresh-keys workflow."
+            )
         self.runtime.eval("\n".join(lines))
 
     def fetch_keys(self) -> dict:
@@ -73,7 +97,15 @@ class HSJKeyFetcher:
         for name, code, idx in ops:
             t = time.time()
             self.runtime.eval(code, suppress=True)
-            raw = self.runtime.eval("dumped_keys", byte_array=True)[idx]
+            dumped = self.runtime.eval("dumped_keys", byte_array=True)
+            if idx >= len(dumped):
+                raise RuntimeError(
+                    f"HSJ extractor captured no key for '{name}' on build "
+                    f"{self.version[:12]} (expected >= {idx + 1} captures, "
+                    f"got {len(dumped)}). The bundle's key-schedule path has "
+                    "changed; the extractor needs an update."
+                )
+            raw = dumped[idx]
             key = bytes(raw).hex()
             self.log.info(
                 f"{name.replace('_',' ').title()} -> {key}",
