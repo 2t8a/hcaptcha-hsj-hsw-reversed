@@ -250,7 +250,9 @@ jobs:
             });
             const existing = issues.data.find(i => i.title === title);
             if (existing) {
-              await github.rest.issues.createComment({
+              // Already tracked — don't spam a comment every 10 minutes.
+              // Just refresh the body with the latest failure detail.
+              await github.rest.issues.update({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: existing.number,
