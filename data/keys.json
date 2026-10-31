@@ -52,13 +52,13 @@
   "use_instead": "live black-box decryptor: `python -m hcaptcha.live decrypt-hsj|decrypt-hsw` (see data/live_status.json)",
   "live_status": "data/live_status.json",
   "live": {
-    "version": "11789739fa3578ad18a9326f7341a335a21f2269b6b5475eccdf6be871caf718",
-    "generated_at_beijing": "2026-10-31T12:04:23.307+08:00",
-    "generated_at_readable": "2026-10-31 12:04:23 (UTC+8)",
+    "version": "8db93d492a473d9af0fb1033bade0f99bc6ec934eeb6c94ff0171081783fa559",
+    "generated_at_beijing": "2026-10-31T18:20:18.255+08:00",
+    "generated_at_readable": "2026-10-31 18:20:18 (UTC+8)",
     "ok": true,
     "hsj_ok": true,
     "hsw_ok": true,
-    "hsj_bundle_bytes": 2832518,
-    "hsw_bundle_bytes": 1588432
+    "hsj_bundle_bytes": 2697838,
+    "hsw_bundle_bytes": 1538541
   }
 }
