@@ -1,9 +1,9 @@
 {
-  "version": "5b690ee3a5cb706efbadd3f6627604c94ea2f29279a653fcaaa8ad91a3b66236",
-  "live_version": "5b690ee3a5cb706efbadd3f6627604c94ea2f29279a653fcaaa8ad91a3b66236",
-  "checked_at": 1794105935,
-  "generated_at_beijing": "2026-11-08T10:45:35.965+08:00",
-  "generated_at_readable": "2026-11-08 10:45:35 (UTC+8)",
+  "version": "39f02bdb3e29b8b5347f25ca9ac767d9f63af162ce16f293d7f30fd90671b29c",
+  "live_version": "39f02bdb3e29b8b5347f25ca9ac767d9f63af162ce16f293d7f30fd90671b29c",
+  "checked_at": 1794130460,
+  "generated_at_beijing": "2026-11-08T17:34:20.451+08:00",
+  "generated_at_readable": "2026-11-08 17:34:20 (UTC+8)",
   "hsj": {
     "ok": true,
     "ciphertext_bytes": 41
@@ -13,6 +13,6 @@
     "ciphertext_bytes": 41
   },
   "ok": true,
-  "hsj_bundle_bytes": 2766760,
-  "hsw_bundle_bytes": 1557959
+  "hsj_bundle_bytes": 2913166,
+  "hsw_bundle_bytes": 1610560
 }
